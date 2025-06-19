@@ -1,128 +1,135 @@
-import React, { useEffect, useRef } from "react";
+import React, { useRef, useEffect } from "react";
 
 type ConfettiProps = {
   active: boolean;
-  duration?: number; // duur in ms
+  duration?: number; // ms
 };
 
-type Particle = {
+type Confetto = {
   x: number;
   y: number;
   w: number;
   h: number;
   color: string;
+  angle: number;
   speed: number;
-  amplitude: number;
-  freq: number;
-  phase: number;
-  alpha: number;
-  startTime: number;
+  zigzag: number;
+  zigzagDir: number;
+  opacity: number;
 };
 
 const COLORS = [
-  "#ff3850", "#ffd700", "#27c93f", "#3498db", "#e67e22",
-  "#9b59b6", "#f8c291", "#ffe066", "#fd79a8", "#a29bfe"
+  "#ffd700", "#1679bc", "#e66472", "#50c878", "#e7effb", "#fffbe6", "#f1ffe9"
 ];
 
-const Confetti: React.FC<ConfettiProps> = ({ active, duration = 8000 }) => {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const particlesRef = useRef<Particle[]>([]);
-  const animationRef = useRef<number>();
-  const fadeOutRef = useRef(false);
+function random(min: number, max: number) {
+  return Math.random() * (max - min) + min;
+}
+
+const Confetti: React.FC<ConfettiProps> = ({ active, duration = 7000 }) => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const animFrame = useRef<number>();
+  const confetti = useRef<Confetto[]>([]);
+  const fadeOut = useRef(false);
+  const fadeStart = useRef(0);
+
+  // Sizing
+  useEffect(() => {
+    function resize() {
+      if (canvasRef.current) {
+        canvasRef.current.width = window.innerWidth;
+        canvasRef.current.height = window.innerHeight;
+      }
+    }
+    resize();
+    window.addEventListener("resize", resize);
+    return () => window.removeEventListener("resize", resize);
+  }, []);
 
   useEffect(() => {
-    if (!active) return;
+    let running = true;
+    if (active) {
+      const width = window.innerWidth;
+      const height = window.innerHeight;
+      const amount = Math.floor(width / 9); // veel confetti
 
-    const canvas = canvasRef.current;
-    if (!canvas) return;
+      confetti.current = Array.from({ length: amount }).map(() => ({
+        x: random(0, width),
+        y: random(-height * random(0.04, 0.3), 0),
+        w: random(10, 22),
+        h: random(4, 13),
+        color: COLORS[Math.floor(Math.random() * COLORS.length)],
+        angle: random(0, 360),
+        speed: random(1.3, 2.5),
+        zigzag: random(1.0, 2.2),
+        zigzagDir: Math.random() < 0.5 ? -1 : 1,
+        opacity: 1
+      }));
+      fadeOut.current = false;
+      fadeStart.current = 0;
 
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width = window.innerWidth * dpr;
-    canvas.height = window.innerHeight * dpr;
-    canvas.style.width = window.innerWidth + "px";
-    canvas.style.height = window.innerHeight + "px";
+      const start = performance.now();
+      const total = duration;
+      let lastNow = start;
 
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
+      function animate(now: number) {
+        if (!running) return;
+        const elapsed = now - start;
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+        const ctx = canvasRef.current?.getContext("2d");
+        if (!ctx || !canvasRef.current) return;
 
-    // Config
-    const PARTICLE_COUNT = Math.floor(window.innerWidth / 6); // aantal confetti: schaal met breedte
-    const particles: Particle[] = [];
-    const now = Date.now();
-    fadeOutRef.current = false;
+        ctx.clearRect(0, 0, width, height);
 
-    for (let i = 0; i < PARTICLE_COUNT; i++) {
-      const x = Math.random() * window.innerWidth * dpr;
-      const y = Math.random() * -window.innerHeight * dpr * 0.5;
-      const w = 7 + Math.random() * 5;
-      const h = 3 + Math.random() * 6;
-      const color = COLORS[Math.floor(Math.random() * COLORS.length)];
-      const speed = 1.7 + Math.random() * 2.2;
-      const amplitude = 20 + Math.random() * 30;
-      const freq = 1.6 + Math.random() * 1.7;
-      const phase = Math.random() * Math.PI * 2;
-      particles.push({ x, y, w, h, color, speed, amplitude, freq, phase, alpha: 1, startTime: now });
-    }
-    particlesRef.current = particles;
-
-    // Animation
-    function animate() {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      const t = (Date.now() - now) / 1000;
-
-      let allInvisible = true;
-
-      for (let p of particles) {
-        // Zigzag: y stijgt, x wiebelt sinusvormig (golfbeweging)
-        p.y += p.speed * dpr;
-        p.x += Math.sin(t * p.freq + p.phase) * p.amplitude * 0.014 * dpr;
-
-        // Fade out
-        if (fadeOutRef.current) {
-          p.alpha -= 0.013; // fade out snelheid (kan je aanpassen)
-          if (p.alpha < 0) p.alpha = 0;
+        // Start fade-out 1.5s voor einde
+        if (!fadeOut.current && elapsed > total - 1500) {
+          fadeOut.current = true;
+          fadeStart.current = now;
+        }
+        let fadeFac = 1;
+        if (fadeOut.current) {
+          fadeFac = Math.max(0, 1 - (now - fadeStart.current) / 1500);
         }
 
-        if (p.y > canvas.height + 30 * dpr) {
-          // respawn bovenaan (voor een vollere animatie)
-          p.y = -20 * dpr;
-          p.x = Math.random() * window.innerWidth * dpr;
-          p.alpha = fadeOutRef.current ? 0 : 1;
+        for (let conf of confetti.current) {
+          // Zigzag-move
+          conf.x += Math.sin((conf.y + conf.w * 5) * 0.05) * conf.zigzag * conf.zigzagDir;
+          conf.y += conf.speed;
+          conf.angle += conf.speed * 0.5;
+          conf.opacity = fadeFac;
+
+          // Draw as rechthoek
+          ctx.save();
+          ctx.globalAlpha = conf.opacity;
+          ctx.translate(conf.x, conf.y);
+          ctx.rotate((conf.angle * Math.PI) / 180);
+          ctx.fillStyle = conf.color;
+          ctx.fillRect(-conf.w / 2, -conf.h / 2, conf.w, conf.h);
+          ctx.restore();
         }
 
-        if (p.alpha > 0.01) allInvisible = false;
-
-        ctx.globalAlpha = p.alpha;
-        ctx.fillStyle = p.color;
-        ctx.fillRect(p.x, p.y, p.w * dpr, p.h * dpr);
-        ctx.globalAlpha = 1;
+        animFrame.current = requestAnimationFrame(animate);
       }
 
-      if (!allInvisible) {
-        animationRef.current = requestAnimationFrame(animate);
-      }
+      animFrame.current = requestAnimationFrame(animate);
+
+      // Stop na duration
+      setTimeout(() => {
+        running = false;
+        if (canvasRef.current) {
+          const ctx = canvasRef.current.getContext("2d");
+          ctx && ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+        }
+      }, duration + 500);
     }
-
-    animate();
-
-    // Stop na X seconden, dan fade out
-    const fadeTimer = setTimeout(() => {
-      fadeOutRef.current = true;
-    }, duration - 1400); // 1.4 sec fade
-
-    // Volledig stoppen na alles onzichtbaar
-    const stopTimer = setTimeout(() => {
-      cancelAnimationFrame(animationRef.current!);
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-    }, duration);
-
-    // Clean up
     return () => {
-      cancelAnimationFrame(animationRef.current!);
-      clearTimeout(fadeTimer);
-      clearTimeout(stopTimer);
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      running = false;
+      if (animFrame.current) cancelAnimationFrame(animFrame.current);
+      if (canvasRef.current) {
+        const ctx = canvasRef.current.getContext("2d");
+        ctx && ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+      }
     };
   }, [active, duration]);
 
@@ -132,16 +139,12 @@ const Confetti: React.FC<ConfettiProps> = ({ active, duration = 8000 }) => {
       style={{
         pointerEvents: "none",
         position: "fixed",
-        left: 0,
-        top: 0,
+        inset: 0,
         width: "100vw",
         height: "100vh",
-        zIndex: 9999,
-        display: active ? "block" : "none"
+        zIndex: 90
       }}
-      width={window.innerWidth}
-      height={window.innerHeight}
-      aria-hidden
+      aria-hidden="true"
     />
   );
 };
